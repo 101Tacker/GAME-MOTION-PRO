@@ -1,0 +1,81 @@
+name: Build Game Motion Pro (101Tacker-version-1)
+
+on:
+  push:
+    branches:
+      - 101Tacker-version-1
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      KEYSTORE_PATH: ${{ github.workspace }}/upload-keystore.jks
+      KEY_ALIAS: upload
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: 101Tacker-version-1
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Import keystore from secret
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        shell: bash
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+
+      - name: Create fallback debug keystore if secret is missing
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 == '' }}
+        shell: bash
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "${{ secrets.STORE_PASSWORD || 'android' }}" \
+            -alias "$KEY_ALIAS" \
+            -keypass "${{ secrets.KEY_PASSWORD || 'android' }}" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Game Motion Pro, OU=CI, O=101Tacker, L=Remote, S=NA, C=US"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-motion-pro-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: 101Tacker-version-1-${{ github.run_number }}
+          name: Game Motion Pro APK ${{ github.run_number }}
+          files: app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
